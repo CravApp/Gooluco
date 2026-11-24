@@ -68,10 +68,20 @@ mostrado, pesos que mostró la pantalla en cada pesaje y si la app OKOK oficial 
 |-----|----------|---------------------|
 | TBD-01 | Variante de la balanza | columna `variant` y `company_id`; si sale vacío con «Solo OKOK» apagado, el formato es otro |
 | TBD-02 | Formato GATT / C0 cifrado | resultado de «Probar GATT FFF0» (servicios y filas `GATT_RAW`), columna `encrypted` |
-| TBD-03 | ¿La balanza transmite IMC? | comparar `data_hex` / `scan_record_hex` con el IMC de la pantalla o de la app OKOK |
+| TBD-03 | ¿La balanza transmite IMC? | **Cerrado (23/11/2026): no.** La balanza no transmite IMC; la app lo calcula con peso OKOK / talla² del perfil. El IMC del smartwatch queda como fuente externa de contraste |
 
 Comprobaciones clave: `weight_kg` = peso de la pantalla; `stable_reading=true` solo una vez por
 pesaje; checksum OK en V20/V11; MAC embebida en C0 = MAC del anunciante.
+
+## Resultado de la primera captura real (23/11/2026)
+
+Teléfono moto g86 power 5G. Una balanza **C0** sin nombre BLE (OUI `78:66:A5`), product ID `0x0A01`,
+anuncio de 17 bytes con solo el AD `0xFF`. 123 tramas en ~10,8 s: 6 en reposo (peso 0), 16
+provisionales (92,85 → 92,80 kg, sin impedancia) y 101 estables idénticas (92,80 kg, `0x1770` =
+600,0 Ω, contador congelado en `0x04`). Unidad kg, ÷100, sin cifrado, MAC embebida = MAC del
+anunciante. Se marcó una sola lectura estable. Tres tramas (MAC enmascarada) quedaron como
+vectores RC-01..RC-03. La impedancia `0x1770` se repite en TV-01/03/04: probablemente es un
+valor por defecto y no una medición, así que el decodificador la anota como sospechosa.
 
 ## Estructura
 
@@ -122,6 +132,8 @@ El decodificador es una **implementación propia** escrita a partir de la especi
 
 - No hay especificación oficial del fabricante: todo sale de ingeniería inversa de terceros.
 - V20, V11 y VF0 solo se probaron con tramas sintéticas; V10/V26 no están implementadas.
+- Impedancia C0 `0x1770` (600,0 Ω): sospechosa de ser valor por defecto; no usarla para composición
+  corporal hasta confirmarlo (pesaje descalzo vs. calzado).
 - C0 con bit de cifrado: se muestra el peso, pero no la impedancia (algoritmo/clave desconocidos).
 - El flag «final» de V11 y la regla de 3 repeticiones de VF0 son supuestos a validar.
 - GATT: solo suscripción cruda a `0xFFF1`; no envía el «user sync», así que muchas balanzas no

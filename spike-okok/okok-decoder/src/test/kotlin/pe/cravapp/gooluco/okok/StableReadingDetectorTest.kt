@@ -20,6 +20,17 @@ class StableReadingDetectorTest {
     }
 
     @Test
+    fun captura_real_reposo_provisional_estable_marca_una_sola_lectura() {
+        val d = StableReadingDetector()
+        val mac = OkokTestVectors.RC03.mac
+        assertTrue(OkokDecoder.decode(OkokTestVectors.RC01.companyId, OkokTestVectors.RC01.data, mac) is DecodeResult.Rejected)
+        assertFalse(d.accept(mac, frame(OkokTestVectors.RC02)))
+        assertTrue(d.accept(mac, frame(OkokTestVectors.RC03)))
+        // En la captura real la trama estable se repitió 101 veces en ~8,8 s: solo se marca una.
+        repeat(100) { assertFalse(d.accept(mac, frame(OkokTestVectors.RC03))) }
+    }
+
+    @Test
     fun vf0_sin_flag_requiere_repeticiones() {
         val d = StableReadingDetector(repeatsForUnflagged = 3)
         val f = frame(OkokTestVectors.SYN_VF0)
@@ -36,7 +47,7 @@ class StableReadingDetectorTest {
             val r = OkokDecoder.decode(v.companyId, v.data, v.mac)
             if (r is DecodeResult.Ok && d.accept(v.mac, r.frame)) v.id else null
         }
-        assertEquals(listOf("TV-01", "TV-03", "TV-02", "SYN-V20", "SYN-V11", "SYN-VF0 #3"), marked)
+        assertEquals(listOf("TV-01", "TV-03", "TV-02", "SYN-V20", "SYN-V11", "SYN-VF0 #3", "RC-03"), marked)
     }
 
     @Test

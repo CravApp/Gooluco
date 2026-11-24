@@ -62,6 +62,40 @@ class OkokDecoderTest {
         assertEquals(false, f.stable)
     }
 
+    // ------------------------------------------------------------ captura real propia (23/11/2026, MAC enmascarada)
+
+    @Test
+    fun rc01_reposo_peso_cero_se_descarta_como_reposo() {
+        val v = OkokTestVectors.RC01
+        val r = OkokDecoder.decode(v.companyId, v.data, v.mac)
+        assertTrue(r is DecodeResult.Rejected)
+        assertEquals(OkokDecoder.REASON_IDLE, (r as DecodeResult.Rejected).reason)
+    }
+
+    @Test
+    fun rc02_provisional_92_85kg_sin_impedancia() {
+        val f = ok(OkokTestVectors.RC02)
+        assertEquals(92.85, f.weightKg, delta)
+        assertEquals(false, f.stable)
+        assertNull(f.impedanceOhm)
+        assertEquals(100, f.divisor)
+        assertEquals(ScaleUnit.KG, f.unit)
+        assertEquals(0x06, f.counter)
+    }
+
+    @Test
+    fun rc03_estable_92_80kg_impedancia_sospechosa() {
+        val f = ok(OkokTestVectors.RC03)
+        assertEquals(92.80, f.weightKg, delta)
+        assertEquals(true, f.stable)
+        assertEquals(600.0, f.impedanceOhm!!, delta)
+        assertFalse(f.encrypted)
+        assertEquals(0x0A01, f.productId)
+        assertEquals("78:66:A5:00:00:01", f.embeddedMac)
+        assertTrue(f.notes.contains(OkokDecoder.NOTE_SUSPECT_IMPEDANCE))
+        assertTrue(f.notes.any { it.contains("MAC embebida = MAC del anunciante") })
+    }
+
     // ------------------------------------------------------------ otras variantes (sintéticas)
 
     @Test

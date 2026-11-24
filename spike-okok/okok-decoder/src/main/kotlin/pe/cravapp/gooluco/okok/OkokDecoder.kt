@@ -25,6 +25,16 @@ object OkokDecoder {
 
     private const val LB_TO_KG = 0.45359237
 
+    /** Motivo para tramas con peso 0: la balanza está encendida pero sin carga (no es un error). */
+    const val REASON_IDLE = "peso cero (balanza en reposo, sin carga)"
+
+    /**
+     * 0x1770 (600,0 Ω) aparece idéntico en TV-01, TV-03, TV-04 y en la captura real del 23/11/2026
+     * (balanza 0x0A01): probablemente es un valor por defecto y no una medición de bioimpedancia.
+     */
+    const val C0_SUSPECT_DEFAULT_IMPEDANCE = 0x1770
+    const val NOTE_SUSPECT_IMPEDANCE = "impedancia 600,0 Ω (0x1770): posible valor por defecto, no medido"
+
     /** Identifica la variante por el Company ID, sin validar el contenido. */
     fun variantOf(companyId: Int): OkokVariant? = when {
         companyId == COMPANY_V20 -> OkokVariant.V20
@@ -153,7 +163,7 @@ object OkokDecoder {
         val notes = mutableListOf("sin flag de estabilidad: se usa repetición de peso")
         if (d.size != VF0_EXPECTED_LENGTH) notes += "longitud ${d.size} (okokscale.py espera $VF0_EXPECTED_LENGTH)"
         val raw = (d.u8(3) shl 8) or d.u8(2)
-        if (raw == 0) return DecodeResult.Rejected(OkokVariant.VF0, "peso cero")
+        if (raw == 0) return DecodeResult.Rejected(OkokVariant.VF0, REASON_IDLE)
         return DecodeResult.Ok(
             OkokFrame(
                 variant = OkokVariant.VF0,
@@ -186,7 +196,7 @@ object OkokDecoder {
         val notes = mutableListOf<String>()
         if (d.size != C0_LENGTH) notes += "longitud ${d.size} (se esperaban $C0_LENGTH)"
         val raw = d.u16be(0)
-        if (raw == 0) return DecodeResult.Rejected(OkokVariant.C0, "peso cero")
+        if (raw == 0) return DecodeResult.Rejected(OkokVariant.C0, REASON_IDLE)
         val attrib = d.u8(6)
         val (divisor, divNote) = divisorFromBits((attrib shr 1) and 0x3)
         divNote?.let { notes += it }
@@ -196,7 +206,10 @@ object OkokDecoder {
         val impedance = when {
             encrypted -> { notes += "impedancia cifrada (bit 7 de byte 2)"; null }
             impRaw == 0 -> null
-            else -> impRaw / 10.0
+            else -> {
+                if (impRaw == C0_SUSPECT_DEFAULT_IMPEDANCE) notes += NOTE_SUSPECT_IMPEDANCE
+                impRaw / 10.0
+            }
         }
         val mac = (7..12).joinToString(":") { "%02X".format(d.u8(it)) }
         if (advertiserMac != null) {
