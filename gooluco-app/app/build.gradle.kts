@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -13,8 +14,12 @@ android {
         applicationId = "pe.cravapp.gooluco"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-base"
+        versionCode = 2
+        versionName = "0.2.0-fhir"
+
+        // AppAuth: esquema del redirect OAuth (igual en debug y release; el servidor solo acepta este).
+        manifestPlaceholders["appAuthRedirectScheme"] = "pe.cravapp.gooluco"
+        buildConfigField("String", "API_BASE", "\"https://gooluco-api.mercadeoperuviano.workers.dev\"")
     }
 
     buildTypes {
@@ -36,6 +41,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     androidResources {
         noCompress += "tflite"
@@ -50,6 +56,7 @@ android {
 
 ksp {
     arg("room.generateKotlin", "true")
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -77,6 +84,13 @@ dependencies {
 
     // LiteRT (antes TensorFlow Lite): intérprete on-device para la Capa B. Sin modelo empaquetado aún.
     implementation("com.google.ai.edge.litert:litert:1.0.1")
+
+    // Sincronización opcional con el servidor FHIR de prueba (SMART on FHIR)
+    implementation("net.openid:appauth:0.11.1")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     testImplementation("junit:junit:4.13.2")
 }

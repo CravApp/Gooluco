@@ -44,7 +44,7 @@ private enum class Pestana(val ruta: String, val etiqueta: String, val icono: Im
     ANALISIS("analisis", "Análisis", Icons.Filled.Psychology),
 }
 
-private val TITULOS = mapOf("ema" to "Estrés", "findrisc" to "FINDRISC", "perfil" to "Perfil", "agenda" to "Agenda")
+private val TITULOS = mapOf("ema" to "Estrés", "findrisc" to "FINDRISC", "perfil" to "Perfil", "agenda" to "Agenda", "sync" to "Servidor")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,10 +53,12 @@ fun AppEquilibra(
     destinoInicial: String?,
     pedirPermisosBle: (() -> Unit) -> Unit,
     pedirPermisoNotificaciones: () -> Unit,
+    conectarServidor: () -> Unit = {},
 ) {
     val d by vm.datos.collectAsStateWithLifecycle()
     val sesion by vm.sesion.collectAsStateWithLifecycle()
     val estadoBle by vm.estadoBle.collectAsStateWithLifecycle()
+    val estadoSync by vm.sync.collectAsStateWithLifecycle()
     val nav = rememberNavController()
 
     if (!d.cargado) {
@@ -135,7 +137,19 @@ fun AppEquilibra(
                     { s, r, a, l, so, est -> vm.guardarEma(s, r, a, l, so, est) }, { nav.popBackStack() })
             }
             composable("findrisc") { PantallaFindrisc(d, { r, i, c -> vm.guardarFindrisc(r, i, c) }, { nav.popBackStack() }) }
-            composable("perfil") { PantallaPerfil(d.perfil, vm::guardarPerfil, { vm.borrarTodo {} }, alGuardar = { nav.popBackStack() }) }
+            composable("perfil") {
+                PantallaPerfil(d.perfil, vm::guardarPerfil, { vm.borrarTodo {} }, alGuardar = { nav.popBackStack() }, abrirSync = { nav.navigate("sync") })
+            }
+            composable("sync") {
+                PantallaSync(estadoSync, AccionesSync(
+                    activar = vm::activarSync,
+                    desactivar = vm::desactivarSync,
+                    conectar = conectarServidor,
+                    desconectar = vm::desconectarServidor,
+                    sincronizar = { vm.sincronizarAhora(it) },
+                    verServidor = { vm.verServidor() },
+                ))
+            }
             composable("agenda") { PantallaAgenda(d.slots, { vm.guardarAgenda(it) }, { nav.popBackStack() }) }
         }
     }

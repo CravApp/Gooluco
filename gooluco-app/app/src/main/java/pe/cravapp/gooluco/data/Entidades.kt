@@ -97,3 +97,15 @@ data class SlotEntity(
     val minutoDelDia: Int,
     val activo: Boolean,
 )
+
+/** Estado de sincronización de cada recurso FHIR derivado de un registro local (clave «PESO:12», «PSS4:3»…). */
+@Entity(tableName = "sync_estado")
+data class SyncEstadoEntity(
+    @PrimaryKey val clave: String,
+    val tipoRecurso: String,
+    val remoteId: String?,
+    val estado: String, // EstadoItem.name
+    val intentos: Int,
+    val error: String?,
+    val actualizadoUtc: Long,
+)

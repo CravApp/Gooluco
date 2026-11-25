@@ -3,7 +3,9 @@
 App Android **Equilibra** (App IMC-Edge, SRS-OKOK-DM-002 v2): peso desde balanzas BLE con protocolo
 **OKOK**, IMC calculado con la talla del perfil, agenda diaria de cuestionarios de estrés (PSS-4 + contexto
 del paper SOSW), FINDRISC, Cuestionario Nórdico y un resumen de riesgo físico para personas con diabetes
-o prediabetes. Todo funciona sin conexión: los datos no salen del teléfono.
+o prediabetes. Todo funciona sin conexión y, por defecto, los datos no salen del teléfono. Desde la versión 0.2.0 hay una
+**sincronización opcional** (desactivada por defecto) con el servidor FHIR R4 + SMART de **prueba** `gooluco-api`;
+ver [gooluco-app/README.md](gooluco-app/README.md#sincronización-con-servidor-opcional).
 
 | Carpeta | Contenido |
 |---|---|

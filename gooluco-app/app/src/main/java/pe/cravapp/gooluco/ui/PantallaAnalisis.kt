@@ -121,7 +121,7 @@ fun PantallaAnalisis(d: Datos, modelo: EstadoModelo, acciones: AccionesHoy) {
         OutlinedButton(onClick = { acciones.ema(null) }, modifier = Modifier.fillMaxWidth()) { Text("Cuestionario de estrés (PSS-4 + contexto)") }
         OutlinedButton(onClick = acciones.findrisc, modifier = Modifier.fillMaxWidth()) { Text("FINDRISC (riesgo de diabetes)") }
         OutlinedButton(onClick = acciones.agenda, modifier = Modifier.fillMaxWidth()) { Text("Agenda diaria y notificaciones") }
-        OutlinedButton(onClick = acciones.perfil, modifier = Modifier.fillMaxWidth()) { Text("Perfil y privacidad") }
+        OutlinedButton(onClick = acciones.perfil, modifier = Modifier.fillMaxWidth()) { Text("Perfil, privacidad y sincronización") }
         AvisoNoDiagnostico()
         Spacer(Modifier.height(24.dp))
     }

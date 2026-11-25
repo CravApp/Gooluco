@@ -48,6 +48,7 @@ fun PantallaPerfil(
     guardar: (PerfilEntity, (String?) -> Unit) -> Unit,
     borrarTodo: () -> Unit,
     alGuardar: () -> Unit,
+    abrirSync: (() -> Unit)? = null,
 ) {
     val cs = MaterialTheme.colorScheme
     val onboarding = actual?.consentimientoUtc == null
@@ -120,6 +121,9 @@ fun PantallaPerfil(
         ) { Text(if (onboarding) "Aceptar y comenzar" else "Guardar perfil") }
 
         if (!onboarding) {
+            HorizontalDivider()
+            Text("Ajustes", style = MaterialTheme.typography.titleMedium)
+            abrirSync?.let { OutlinedButton(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("Sincronización con servidor (opcional)") } }
             HorizontalDivider()
             Text("Privacidad", style = MaterialTheme.typography.titleMedium)
             Text("Tus datos no salen del teléfono. Revocar el consentimiento elimina todos los datos locales y detiene la agenda.",

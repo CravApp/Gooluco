@@ -17,6 +17,8 @@ import pe.cravapp.gooluco.domain.SlotAgenda
 import pe.cravapp.gooluco.domain.TipoSlot
 import pe.cravapp.gooluco.notif.Agendador
 import pe.cravapp.gooluco.notif.aDominio
+import pe.cravapp.gooluco.sync.AlmacenSeguro
+import pe.cravapp.gooluco.sync.ProgramadorSync
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -32,6 +34,10 @@ class Repositorio(private val ctx: Context, private val db: BaseDatos, val cfg: 
     val findrisc = db.cuestionarios().observarFindrisc()
     val nordico = db.cuestionarios().observarNordico()
     val agenda = db.agenda().observar()
+    val tallas = db.lecturaSync().observarTallas()
+    val estadosSync = db.sync().observar()
+
+    private fun avisarSync() = ProgramadorSync.siActiva(ctx)
 
     suspend fun guardarPerfil(nuevo: PerfilEntity) = withContext(Dispatchers.IO) {
         val anterior = db.perfil().obtener()
@@ -39,6 +45,7 @@ class Repositorio(private val ctx: Context, private val db: BaseDatos, val cfg: 
         db.perfil().guardar(nuevo)
         if (anterior?.tallaCm != nuevo.tallaCm) {
             db.perfil().registrarTalla(TallaHistorialEntity(tallaCm = nuevo.tallaCm, desdeUtc = System.currentTimeMillis()))
+            avisarSync()
         }
         if (db.agenda().todos().isEmpty()) guardarAgendaInterno(Agenda.SLOTS_DEFECTO)
         else Agendador.programar(ctx, db.agenda().todos().map { it.aDominio() }, cfg)
@@ -81,7 +88,7 @@ class Repositorio(private val ctx: Context, private val db: BaseDatos, val cfg: 
                 fechaLocal = fecha.toString(),
                 franja = franja.name,
             )
-        )
+        ).also { avisarSync() }
     }
 
     suspend fun fijarImcExterno(id: Long, imc: Double?) = withContext(Dispatchers.IO) { db.pesajes().fijarImcExterno(id, imc) }
@@ -113,6 +120,7 @@ class Repositorio(private val ctx: Context, private val db: BaseDatos, val cfg: 
                 version = Pss4.VERSION,
             )
         )
+        avisarSync()
     }
 
     /** RF-19: marca como EXPIRADA cada EMA de hoy/ayer cuya ventana cerró sin registro (desde el consentimiento). */
@@ -149,10 +157,12 @@ class Repositorio(private val ctx: Context, private val db: BaseDatos, val cfg: 
             )
         )
         db.perfil().obtener()?.let { if (it.cinturaCm != cintura) db.perfil().guardar(it.copy(cinturaCm = cintura)) }
+        avisarSync()
     }
 
     suspend fun guardarNordico(r: Map<RegionNordica, RespuestaRegion>) = withContext(Dispatchers.IO) {
         db.cuestionarios().insertarNordico(NordicoEntity(timestampUtc = System.currentTimeMillis(), respuestas = Nordico.codificar(r), version = Nordico.VERSION))
+        avisarSync()
     }
 
     suspend fun guardarAgenda(slots: List<SlotAgenda>) = withContext(Dispatchers.IO) { guardarAgendaInterno(slots) }
@@ -165,6 +175,8 @@ class Repositorio(private val ctx: Context, private val db: BaseDatos, val cfg: 
     /** RF-39: elimina todos los datos locales y cancela las notificaciones. */
     suspend fun borrarTodo() = withContext(Dispatchers.IO) {
         Agendador.cancelarTodo(ctx, db.agenda().todos().map { it.aDominio() })
+        ProgramadorSync.cancelar(ctx)
+        AlmacenSeguro.get(ctx).desconectar(desactivar = true) // los datos ya subidos al servidor de prueba no se borran desde aquí
         db.clearAllTables()
     }
 

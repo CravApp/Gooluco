@@ -32,6 +32,20 @@ import pe.cravapp.gooluco.domain.SlotAgenda
 import pe.cravapp.gooluco.ml.ModeloLiteRt
 import pe.cravapp.gooluco.ml.ModeloRiesgo
 import pe.cravapp.gooluco.notif.aDominio
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import pe.cravapp.gooluco.data.SyncEstadoEntity
+import pe.cravapp.gooluco.fhir.Observation
+import pe.cravapp.gooluco.fhir.MapeadorFhir
+import pe.cravapp.gooluco.sync.AlmacenSeguro
+import pe.cravapp.gooluco.sync.ClienteFhir
+import pe.cravapp.gooluco.sync.ClienteSmart
+import pe.cravapp.gooluco.sync.EstadoConexion
+import pe.cravapp.gooluco.sync.EstadoItem
+import pe.cravapp.gooluco.sync.ErrorSync
+import pe.cravapp.gooluco.sync.PlanSync
+import pe.cravapp.gooluco.sync.ProgramadorSync
+import pe.cravapp.gooluco.sync.TrabajoSync
 import java.time.ZonedDateTime
 import kotlin.math.abs
 
@@ -44,6 +58,17 @@ data class Datos(
     val nordico: List<NordicoEntity> = emptyList(),
     val slots: List<SlotAgenda> = emptyList(),
     val panel: Panel = Panel(),
+)
+
+/** Estado de la sincronización con el servidor FHIR de prueba. */
+data class EstadoSyncUi(
+    val conexion: EstadoConexion = EstadoConexion(),
+    val pendientes: Int = 0,
+    val sincronizados: Int = 0,
+    val rechazados: List<SyncEstadoEntity> = emptyList(),
+    val enCurso: Boolean = false,
+    val servidor: List<Observation>? = null,
+    val mensajeServidor: String? = null,
 )
 
 /** Estado de la sesión de pesaje en la pestaña Balanza. */
@@ -69,6 +94,63 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) { (p, w, e), (f, n, a), ahora ->
         Datos(true, p, w, e, f, n, a.map { it.aDominio() }, CalculoPanel.calcular(p, w, e, f, n, ahora, repo.cfg))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Datos())
+
+    val almacen = AlmacenSeguro.get(app)
+    private val servidor = MutableStateFlow<Pair<List<Observation>?, String?>>(null to null)
+
+    val sync: StateFlow<EstadoSyncUi> = combine(
+        almacen.estado,
+        combine(datos, repo.tallas, repo.estadosSync) { d, t, e -> Triple(d, t, e) },
+        WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(TrabajoSync.UNICO),
+        servidor,
+    ) { con, (d, tallas, estados), trabajos, srv ->
+        val cands = PlanSync.candidatos(
+            MapeadorFhir(almacen.idInstalacion), repo.cfg.zona.id, d.perfil, d.pesajes, tallas, d.emas, d.findrisc, d.nordico, con.desdeUtc,
+        )
+        val mapa = estados.associateBy { it.clave }
+        EstadoSyncUi(
+            conexion = con,
+            pendientes = if (con.activa) PlanSync.contarPendientes(cands, mapa) else 0,
+            sincronizados = estados.count { it.estado == EstadoItem.SINCRONIZADO.name },
+            rechazados = estados.filter { it.estado == EstadoItem.ERROR.name }.sortedByDescending { it.actualizadoUtc },
+            enCurso = trabajos.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED },
+            servidor = srv.first,
+            mensajeServidor = srv.second,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EstadoSyncUi())
+
+    fun activarSync(incluirAnteriores: Boolean) {
+        almacen.activar(if (incluirAnteriores) 0L else System.currentTimeMillis())
+    }
+
+    fun desactivarSync() {
+        ProgramadorSync.cancelar(getApplication())
+        almacen.desconectar(desactivar = true)
+        servidor.value = null to null
+    }
+
+    /** Cierra la sesión: borra los tokens cifrados; la opción de sincronizar queda activada. */
+    fun desconectarServidor() {
+        ProgramadorSync.cancelar(getApplication())
+        almacen.desconectar(desactivar = false)
+        servidor.value = null to null
+    }
+
+    fun alConectar() {
+        ProgramadorSync.periodica(getApplication())
+        ProgramadorSync.ahora(getApplication())
+    }
+
+    fun sincronizarAhora(reintentarErrores: Boolean) = ProgramadorSync.ahora(getApplication(), reintentarErrores)
+
+    fun verServidor() = viewModelScope.launch {
+        val pac = almacen.estado.value.paciente ?: return@launch
+        servidor.value = null to "Consultando…"
+        servidor.value = try {
+            val token = ClienteSmart(getApplication(), almacen).tokenVigente()
+            ClienteFhir().pesos(pac, token) to null
+        } catch (e: ErrorSync) { null to e.message } catch (e: Exception) { null to "Error: ${e.message}" }
+    }
 
     private val ble = AdaptadorBleOkok(app, viewModelScope)
     private val sim = SimuladorOkok(viewModelScope)

@@ -46,3 +46,22 @@ interface AgendaDao {
     @Query("SELECT * FROM slot_agenda ORDER BY minutoDelDia, id") suspend fun todos(): List<SlotEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun guardar(s: List<SlotEntity>)
 }
+
+@Dao
+interface SyncDao {
+    @Query("SELECT * FROM sync_estado") fun observar(): Flow<List<SyncEstadoEntity>>
+    @Query("SELECT * FROM sync_estado") suspend fun todos(): List<SyncEstadoEntity>
+    @Upsert suspend fun guardar(s: SyncEstadoEntity)
+    @Query("DELETE FROM sync_estado") suspend fun borrarTodo()
+}
+
+/** Consultas de solo lectura para armar la cola de sincronización. */
+@Dao
+interface LecturaSyncDao {
+    @Query("SELECT * FROM pesaje") suspend fun pesajes(): List<PesajeEntity>
+    @Query("SELECT * FROM talla_historial") suspend fun tallas(): List<TallaHistorialEntity>
+    @Query("SELECT * FROM talla_historial") fun observarTallas(): Flow<List<TallaHistorialEntity>>
+    @Query("SELECT * FROM ema_respuesta") suspend fun emas(): List<EmaRespuestaEntity>
+    @Query("SELECT * FROM findrisc") suspend fun findrisc(): List<FindriscEntity>
+    @Query("SELECT * FROM nordico") suspend fun nordico(): List<NordicoEntity>
+}

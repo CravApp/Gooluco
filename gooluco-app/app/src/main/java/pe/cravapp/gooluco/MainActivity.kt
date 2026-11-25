@@ -13,6 +13,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import net.openid.appauth.AuthorizationService
+import pe.cravapp.gooluco.sync.ClienteSmart
 import pe.cravapp.gooluco.domain.TipoSlot
 import pe.cravapp.gooluco.notif.Agendador
 import pe.cravapp.gooluco.ui.AppEquilibra
@@ -31,6 +35,31 @@ class MainActivity : ComponentActivity() {
         trasPermisos = null
     }
     private val permisoNotif = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    // ---- SMART on FHIR (AppAuth): login en Custom Tab con PKCE + aud
+    private var servicioAuthInst: AuthorizationService? = null
+    private val servicioAuth: AuthorizationService get() = servicioAuthInst ?: AuthorizationService(this).also { servicioAuthInst = it }
+    private val smart by lazy { ClienteSmart(applicationContext, vm.almacen) }
+    private val login = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        lifecycleScope.launch {
+            try {
+                smart.completarLogin(servicioAuth, r.data)
+                vm.alConectar()
+            } catch (e: Exception) {
+                vm.almacen.registrarError(e.message ?: "No se pudo iniciar sesión.")
+            }
+        }
+    }
+
+    private fun conectarServidor() {
+        lifecycleScope.launch {
+            try {
+                login.launch(smart.intentAutorizacion(servicioAuth))
+            } catch (e: Exception) {
+                vm.almacen.registrarError("No se pudo abrir el inicio de sesión: ${e.message}")
+            }
+        }
+    }
 
     private fun permisosBleRequeridos(): Array<String> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) arrayOf(
@@ -75,7 +104,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             TemaEquilibra {
                 Surface {
-                    AppEquilibra(vm, destino, ::pedirBle, ::pedirNotificaciones)
+                    AppEquilibra(vm, destino, ::pedirBle, ::pedirNotificaciones, ::conectarServidor)
                 }
             }
         }
@@ -85,6 +114,12 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         recreate()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        servicioAuthInst?.dispose()
+        servicioAuthInst = null
     }
 
     override fun onResume() {
