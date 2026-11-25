@@ -1,0 +1,2260 @@
+{
+  "info": {
+    "_postman_id": "7a457609-6e06-5b9d-b398-2963f0cfc099",
+    "name": "Gooluco API — SMART on FHIR (ana / beto, PRUEBA)",
+    "description": "Valida la API FHIR R4 + SMART App Launch 2.x de Gooluco con los usuarios FICTICIOS ana y beto. Orden: Descubrimiento → Ana → Beto → Seguridad cruzada. Ver postman/README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Descubrimiento",
+      "item": [
+        {
+          "name": "metadata (CapabilityStatement)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 application/fhir+json', () => { pm.response.to.have.status(200); pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'); });",
+                  "const cs = pm.response.json();",
+                  "pm.test('CapabilityStatement FHIR 4.0.1', () => { pm.expect(cs.resourceType).to.eql('CapabilityStatement'); pm.expect(cs.fhirVersion).to.eql('4.0.1'); });",
+                  "pm.test('seguridad SMART-on-FHIR', () => pm.expect(cs.rest[0].security.service[0].coding[0].code).to.eql('SMART-on-FHIR'));",
+                  "pm.test('recursos soportados', () => { const t = cs.rest[0].resource.map((x) => x.type); ['Patient', 'Observation', 'QuestionnaireResponse', 'Questionnaire'].forEach((x) => pm.expect(t).to.include(x)); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/metadata",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "smart-configuration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test('endpoints del servidor', () => { pm.expect(c.authorization_endpoint).to.eql(pm.environment.get('base_url') + '/auth/authorize'); pm.expect(c.token_endpoint).to.eql(pm.environment.get('base_url') + '/auth/token'); });",
+                  "pm.test('PKCE S256 y sin plain', () => { pm.expect(c.code_challenge_methods_supported).to.include('S256'); pm.expect(c.code_challenge_methods_supported).to.not.include('plain'); });",
+                  "pm.test('capabilities standalone de paciente', () => ['launch-standalone', 'client-public', 'context-standalone-patient', 'permission-patient', 'permission-v2'].forEach((x) => pm.expect(c.capabilities).to.include(x)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{fhir_base}}/.well-known/smart-configuration",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Questionnaire PSS-4 (público)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const q = pm.response.json();",
+                  "pm.test('4 ítems PSS-4', () => pm.expect(q.item.filter((i) => /^pss4-\\d$/.test(i.linkId)).length).to.eql(4));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Questionnaire/pss4-ema",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ana",
+      "description": "Flujo SMART completo como el usuario ficticio «ana» (Patient/demo-ana).",
+      "item": [
+        {
+          "name": "Ana 1 · Autorizar como «ana» (formulario de consentimiento de prueba)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// PKCE S256 (RFC 7636): code_verifier aleatorio y code_challenge = BASE64URL(SHA256(verifier))",
+                  "const CJ = require('crypto-js');",
+                  "const b64url = (w) => CJ.enc.Base64.stringify(w).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+                  "const verifier = b64url(CJ.lib.WordArray.random(48));",
+                  "const challenge = b64url(CJ.SHA256(verifier));",
+                  "const state = b64url(CJ.lib.WordArray.random(12));",
+                  "pm.collectionVariables.set('ana_code_verifier', verifier);",
+                  "pm.collectionVariables.set('ana_code_challenge', challenge);",
+                  "pm.collectionVariables.set('ana_state', state);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('302 hacia redirect_uri (consentimiento aceptado)', () => {",
+                  "  pm.response.to.have.status(302);",
+                  "  pm.expect(pm.response.headers.get('Location')).to.match(new RegExp('^' + pm.environment.get('redirect_uri').replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')));",
+                  "});",
+                  "const loc = pm.response.headers.get('Location') || '';",
+                  "const qs = {};",
+                  "(loc.split('?')[1] || '').split('&').forEach((kv) => { const [k, v] = kv.split('='); if (k) qs[k] = decodeURIComponent(v || ''); });",
+                  "pm.test('la respuesta trae code', () => pm.expect(qs.code, JSON.stringify(qs)).to.be.a('string').and.not.empty);",
+                  "pm.test('state coincide (anti-CSRF)', () => pm.expect(qs.state).to.eql(pm.collectionVariables.get('ana_state')));",
+                  "pm.test('sin error OAuth', () => pm.expect(qs.error).to.be.undefined);",
+                  "pm.collectionVariables.set('ana_code', qs.code || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/authorize",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "response_type",
+                  "value": "code",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{redirect_uri}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "launch/patient openid fhirUser offline_access patient/Patient.rs patient/Observation.crs patient/QuestionnaireResponse.crs",
+                  "type": "text"
+                },
+                {
+                  "key": "state",
+                  "value": "{{ana_state}}",
+                  "type": "text"
+                },
+                {
+                  "key": "aud",
+                  "value": "{{fhir_base}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_challenge",
+                  "value": "{{ana_code_challenge}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_challenge_method",
+                  "value": "S256",
+                  "type": "text"
+                },
+                {
+                  "key": "decision",
+                  "value": "allow",
+                  "type": "text"
+                },
+                {
+                  "key": "user",
+                  "value": "ana",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Simula el clic «Autorizar» en la página de prueba. followRedirects está desactivado para leer el `code` del header Location."
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Ana 2 · Canjear code + code_verifier en /auth/token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const CJ = require('crypto-js');",
+                  "const jwtPayload = (t) => { let p = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); while (p.length % 4) p += '='; return JSON.parse(CJ.enc.Base64.parse(p).toString(CJ.enc.Utf8)); };",
+                  "",
+                  "pm.test('200 token emitido', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('token_type Bearer y expires_in', () => { pm.expect(t.token_type.toLowerCase()).to.eql('bearer'); pm.expect(t.expires_in).to.be.above(0); });",
+                  "pm.test('Cache-Control: no-store', () => pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'));",
+                  "pm.test('contexto patient = demo-ana', () => pm.expect(t.patient).to.eql('demo-ana'));",
+                  "pm.test('scopes concedidos', () => { const s = t.scope.split(' '); [\"launch/patient\", \"openid\", \"fhirUser\", \"offline_access\", \"patient/Patient.rs\", \"patient/Observation.crs\", \"patient/QuestionnaireResponse.crs\"].forEach((x) => pm.expect(s).to.include(x)); });",
+                  "const at = jwtPayload(t.access_token);",
+                  "pm.test('access_token ES256 con aud = base FHIR', () => { pm.expect(at.aud).to.eql(pm.environment.get('fhir_base')); pm.expect(at.patient).to.eql('demo-ana'); });",
+                  "pm.collectionVariables.set('ana_access_token', t.access_token);",
+                  "pm.collectionVariables.set('ana_patient', t.patient || '');",
+                  "",
+                  "pm.test('id_token con fhirUser del paciente', () => pm.expect(jwtPayload(t.id_token).fhirUser).to.match(/\\/Patient\\/demo-ana$/));",
+                  "pm.test('refresh_token (offline_access)', () => pm.expect(t.refresh_token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('ana_refresh_token', t.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "authorization_code",
+                  "type": "text"
+                },
+                {
+                  "key": "code",
+                  "value": "{{ana_code}}",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{redirect_uri}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_verifier",
+                  "value": "{{ana_code_verifier}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Ana 3 · Leer Patient propio",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const r = pm.response.json();",
+                  "pm.test('Patient/demo-ana', () => { pm.expect(r.resourceType).to.eql('Patient'); pm.expect(r.id).to.eql('demo-ana'); });",
+                  "pm.test('es un paciente FICTICIO', () => pm.expect(r.name[0].family).to.match(/FICTICI/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/{{ana_patient}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 4 · POST peso 70.4 kg (LOINC 29463-7)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('ana_now', new Date().toISOString());",
+                  "pm.collectionVariables.set('ana_today', new Date().toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Content-Type application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const o = pm.response.json();",
+                  "pm.test('Location y ETag W/\"1\"', () => { pm.expect(pm.response.headers.get('Location')).to.include('/fhir/Observation/' + o.id + '/_history/1'); pm.expect(pm.response.headers.get('ETag')).to.eql('W/\"1\"'); });",
+                  "pm.test('LOINC 29463-7, valor 70.4 y subject propio', () => {",
+                  "  pm.expect(o.code.coding[0].code).to.eql('29463-7');",
+                  "  pm.expect(o.valueQuantity.value).to.eql(70.4);",
+                  "  pm.expect(o.subject.reference).to.eql('Patient/' + pm.collectionVariables.get('ana_patient'));",
+                  "});",
+                  "pm.test('perfil R4 bodyweight', () => pm.expect(o.meta.profile).to.include('http://hl7.org/fhir/StructureDefinition/bodyweight'));",
+                  "pm.collectionVariables.set('ana_weight_id', o.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"29463-7\",\n        \"display\": \"Body weight\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{ana_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{ana_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 70.4,\n    \"unit\": \"kg\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"kg\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 5 · POST talla 160 cm (LOINC 8302-2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Content-Type application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const o = pm.response.json();",
+                  "pm.test('Location y ETag W/\"1\"', () => { pm.expect(pm.response.headers.get('Location')).to.include('/fhir/Observation/' + o.id + '/_history/1'); pm.expect(pm.response.headers.get('ETag')).to.eql('W/\"1\"'); });",
+                  "pm.test('LOINC 8302-2, valor 160 y subject propio', () => {",
+                  "  pm.expect(o.code.coding[0].code).to.eql('8302-2');",
+                  "  pm.expect(o.valueQuantity.value).to.eql(160);",
+                  "  pm.expect(o.subject.reference).to.eql('Patient/' + pm.collectionVariables.get('ana_patient'));",
+                  "});",
+                  "pm.test('perfil R4 bodyheight', () => pm.expect(o.meta.profile).to.include('http://hl7.org/fhir/StructureDefinition/bodyheight'));",
+                  "pm.collectionVariables.set('ana_height_id', o.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"8302-2\",\n        \"display\": \"Body height\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{ana_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{ana_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 160,\n    \"unit\": \"cm\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"cm\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 6 · POST IMC 27.5 kg/m2 (LOINC 39156-5, derivedFrom)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Content-Type application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const o = pm.response.json();",
+                  "pm.test('Location y ETag W/\"1\"', () => { pm.expect(pm.response.headers.get('Location')).to.include('/fhir/Observation/' + o.id + '/_history/1'); pm.expect(pm.response.headers.get('ETag')).to.eql('W/\"1\"'); });",
+                  "pm.test('LOINC 39156-5, valor 27.5 y subject propio', () => {",
+                  "  pm.expect(o.code.coding[0].code).to.eql('39156-5');",
+                  "  pm.expect(o.valueQuantity.value).to.eql(27.5);",
+                  "  pm.expect(o.subject.reference).to.eql('Patient/' + pm.collectionVariables.get('ana_patient'));",
+                  "});",
+                  "pm.test('perfil R4 bmi', () => pm.expect(o.meta.profile).to.include('http://hl7.org/fhir/StructureDefinition/bmi'));",
+                  "pm.collectionVariables.set('ana_bmi_id', o.id);",
+                  "pm.test('derivedFrom peso y talla', () => pm.expect(o.derivedFrom.length).to.eql(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"39156-5\",\n        \"display\": \"Body mass index (BMI) [Ratio]\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{ana_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{ana_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 27.5,\n    \"unit\": \"kg/m2\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"kg/m2\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ],\n  \"derivedFrom\": [\n    {\n      \"reference\": \"Observation/{{ana_weight_id}}\"\n    },\n    {\n      \"reference\": \"Observation/{{ana_height_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 7 · Buscar Observations propias (patient + code + date)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 Bundle searchset', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.resourceType).to.eql('Bundle'); pm.expect(b.type).to.eql('searchset'); });",
+                  "const b = pm.response.json();",
+                  "const ids = (b.entry || []).map((e) => e.resource.id);",
+                  "pm.test('incluye peso, talla e IMC recién creados', () => ['ana_weight_id', 'ana_height_id', 'ana_bmi_id'].forEach((v) => pm.expect(ids).to.include(pm.collectionVariables.get(v))));",
+                  "pm.test('todas son del paciente propio', () => (b.entry || []).forEach((e) => pm.expect(e.resource.subject.reference).to.eql('Patient/demo-ana')));",
+                  "pm.test('solo códigos pedidos', () => (b.entry || []).forEach((e) => pm.expect(['29463-7', '8302-2', '39156-5']).to.include(e.resource.code.coding[0].code)));",
+                  "pm.test('total >= 3', () => pm.expect(b.total).to.be.at.least(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation?patient=Patient/{{ana_patient}}&code=http://loinc.org|29463-7,http://loinc.org|8302-2,http://loinc.org|39156-5&date=ge{{ana_today}}&_count=100",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 8 · POST QuestionnaireResponse PSS-4 (total 5)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const q = pm.response.json();",
+                  "pm.test('PSS-4 del paciente propio', () => { pm.expect(q.questionnaire).to.eql('https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema'); pm.expect(q.subject.reference).to.eql('Patient/demo-ana'); });",
+                  "pm.test('total PSS-4 = 5 (ítems 2 y 3 invertidos)', () => pm.expect(q.item.find((i) => i.linkId === 'pss4-total').answer[0].valueInteger).to.eql(5));",
+                  "pm.collectionVariables.set('ana_qr_id', q.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/QuestionnaireResponse",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"QuestionnaireResponse\",\n  \"questionnaire\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema\",\n  \"status\": \"completed\",\n  \"subject\": {\n    \"reference\": \"Patient/{{ana_patient}}\"\n  },\n  \"authored\": \"{{ana_now}}\",\n  \"item\": [\n    {\n      \"linkId\": \"pss4-1\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"1\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-2\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"3\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-3\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"2\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-4\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"1\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-total\",\n      \"answer\": [\n        {\n          \"valueInteger\": 5\n        }\n      ]\n    },\n    {\n      \"linkId\": \"actividad\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/actividad\",\n            \"code\": \"trabajando_estudiando\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"lugar\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/lugar\",\n            \"code\": \"casa\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"social\",\n      \"answer\": [\n        {\n          \"valueBoolean\": false\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 9 · Buscar QuestionnaireResponse PSS-4 propias",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 Bundle', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('incluye la respuesta creada', () => pm.expect((b.entry || []).map((e) => e.resource.id)).to.include(pm.collectionVariables.get('ana_qr_id')));",
+                  "pm.test('solo del paciente propio', () => (b.entry || []).forEach((e) => pm.expect(e.resource.subject.reference).to.eql('Patient/demo-ana')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/QuestionnaireResponse?questionnaire=https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema&authored=ge{{ana_today}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana 10 · Refresh token (rotación)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('ana_old_refresh_token', pm.collectionVariables.get('ana_refresh_token'));",
+                  "pm.collectionVariables.set('ana_old_access_token', pm.collectionVariables.get('ana_access_token'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 nuevo token', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('mismo paciente y scope', () => { pm.expect(t.patient).to.eql('demo-ana'); pm.expect(t.scope.split(' ')).to.include('patient/Observation.crs'); });",
+                  "pm.test('refresh_token rotado (distinto del anterior)', () => { pm.expect(t.refresh_token).to.be.a('string'); pm.expect(t.refresh_token).to.not.eql(pm.collectionVariables.get('ana_old_refresh_token')); });",
+                  "pm.test('access_token nuevo', () => pm.expect(t.access_token).to.not.eql(pm.collectionVariables.get('ana_old_access_token')));",
+                  "pm.collectionVariables.set('ana_access_token', t.access_token);",
+                  "pm.collectionVariables.set('ana_refresh_token', t.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "refresh_token",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{ana_refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Ana 11 · Reusar el refresh token anterior → invalid_grant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('error invalid_grant', () => pm.expect(pm.response.json().error).to.eql('invalid_grant'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "refresh_token",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{ana_old_refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Ana 12 · El access token renovado funciona",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK con el token renovado', () => pm.response.to.have.status(200));",
+                  "pm.test('Patient/demo-ana', () => pm.expect(pm.response.json().id).to.eql('demo-ana'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/{{ana_patient}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Beto",
+      "description": "Flujo SMART completo como el usuario ficticio «beto» (Patient/demo-beto).",
+      "item": [
+        {
+          "name": "Beto 1 · Autorizar como «beto» (formulario de consentimiento de prueba)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// PKCE S256 (RFC 7636): code_verifier aleatorio y code_challenge = BASE64URL(SHA256(verifier))",
+                  "const CJ = require('crypto-js');",
+                  "const b64url = (w) => CJ.enc.Base64.stringify(w).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+                  "const verifier = b64url(CJ.lib.WordArray.random(48));",
+                  "const challenge = b64url(CJ.SHA256(verifier));",
+                  "const state = b64url(CJ.lib.WordArray.random(12));",
+                  "pm.collectionVariables.set('beto_code_verifier', verifier);",
+                  "pm.collectionVariables.set('beto_code_challenge', challenge);",
+                  "pm.collectionVariables.set('beto_state', state);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('302 hacia redirect_uri (consentimiento aceptado)', () => {",
+                  "  pm.response.to.have.status(302);",
+                  "  pm.expect(pm.response.headers.get('Location')).to.match(new RegExp('^' + pm.environment.get('redirect_uri').replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')));",
+                  "});",
+                  "const loc = pm.response.headers.get('Location') || '';",
+                  "const qs = {};",
+                  "(loc.split('?')[1] || '').split('&').forEach((kv) => { const [k, v] = kv.split('='); if (k) qs[k] = decodeURIComponent(v || ''); });",
+                  "pm.test('la respuesta trae code', () => pm.expect(qs.code, JSON.stringify(qs)).to.be.a('string').and.not.empty);",
+                  "pm.test('state coincide (anti-CSRF)', () => pm.expect(qs.state).to.eql(pm.collectionVariables.get('beto_state')));",
+                  "pm.test('sin error OAuth', () => pm.expect(qs.error).to.be.undefined);",
+                  "pm.collectionVariables.set('beto_code', qs.code || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/authorize",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "response_type",
+                  "value": "code",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{redirect_uri}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "launch/patient openid fhirUser offline_access patient/Patient.rs patient/Observation.crs patient/QuestionnaireResponse.crs",
+                  "type": "text"
+                },
+                {
+                  "key": "state",
+                  "value": "{{beto_state}}",
+                  "type": "text"
+                },
+                {
+                  "key": "aud",
+                  "value": "{{fhir_base}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_challenge",
+                  "value": "{{beto_code_challenge}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_challenge_method",
+                  "value": "S256",
+                  "type": "text"
+                },
+                {
+                  "key": "decision",
+                  "value": "allow",
+                  "type": "text"
+                },
+                {
+                  "key": "user",
+                  "value": "beto",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Simula el clic «Autorizar» en la página de prueba. followRedirects está desactivado para leer el `code` del header Location."
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Beto 2 · Canjear code + code_verifier en /auth/token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const CJ = require('crypto-js');",
+                  "const jwtPayload = (t) => { let p = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); while (p.length % 4) p += '='; return JSON.parse(CJ.enc.Base64.parse(p).toString(CJ.enc.Utf8)); };",
+                  "",
+                  "pm.test('200 token emitido', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('token_type Bearer y expires_in', () => { pm.expect(t.token_type.toLowerCase()).to.eql('bearer'); pm.expect(t.expires_in).to.be.above(0); });",
+                  "pm.test('Cache-Control: no-store', () => pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'));",
+                  "pm.test('contexto patient = demo-beto', () => pm.expect(t.patient).to.eql('demo-beto'));",
+                  "pm.test('scopes concedidos', () => { const s = t.scope.split(' '); [\"launch/patient\", \"openid\", \"fhirUser\", \"offline_access\", \"patient/Patient.rs\", \"patient/Observation.crs\", \"patient/QuestionnaireResponse.crs\"].forEach((x) => pm.expect(s).to.include(x)); });",
+                  "const at = jwtPayload(t.access_token);",
+                  "pm.test('access_token ES256 con aud = base FHIR', () => { pm.expect(at.aud).to.eql(pm.environment.get('fhir_base')); pm.expect(at.patient).to.eql('demo-beto'); });",
+                  "pm.collectionVariables.set('beto_access_token', t.access_token);",
+                  "pm.collectionVariables.set('beto_patient', t.patient || '');",
+                  "",
+                  "pm.test('id_token con fhirUser del paciente', () => pm.expect(jwtPayload(t.id_token).fhirUser).to.match(/\\/Patient\\/demo-beto$/));",
+                  "pm.test('refresh_token (offline_access)', () => pm.expect(t.refresh_token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('beto_refresh_token', t.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "authorization_code",
+                  "type": "text"
+                },
+                {
+                  "key": "code",
+                  "value": "{{beto_code}}",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{redirect_uri}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_verifier",
+                  "value": "{{beto_code_verifier}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Beto 3 · Leer Patient propio",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const r = pm.response.json();",
+                  "pm.test('Patient/demo-beto', () => { pm.expect(r.resourceType).to.eql('Patient'); pm.expect(r.id).to.eql('demo-beto'); });",
+                  "pm.test('es un paciente FICTICIO', () => pm.expect(r.name[0].family).to.match(/FICTICI/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/{{beto_patient}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 4 · POST peso 85.2 kg (LOINC 29463-7)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('beto_now', new Date().toISOString());",
+                  "pm.collectionVariables.set('beto_today', new Date().toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Content-Type application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const o = pm.response.json();",
+                  "pm.test('Location y ETag W/\"1\"', () => { pm.expect(pm.response.headers.get('Location')).to.include('/fhir/Observation/' + o.id + '/_history/1'); pm.expect(pm.response.headers.get('ETag')).to.eql('W/\"1\"'); });",
+                  "pm.test('LOINC 29463-7, valor 85.2 y subject propio', () => {",
+                  "  pm.expect(o.code.coding[0].code).to.eql('29463-7');",
+                  "  pm.expect(o.valueQuantity.value).to.eql(85.2);",
+                  "  pm.expect(o.subject.reference).to.eql('Patient/' + pm.collectionVariables.get('beto_patient'));",
+                  "});",
+                  "pm.test('perfil R4 bodyweight', () => pm.expect(o.meta.profile).to.include('http://hl7.org/fhir/StructureDefinition/bodyweight'));",
+                  "pm.collectionVariables.set('beto_weight_id', o.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"29463-7\",\n        \"display\": \"Body weight\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{beto_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{beto_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 85.2,\n    \"unit\": \"kg\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"kg\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 5 · POST talla 175 cm (LOINC 8302-2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Content-Type application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const o = pm.response.json();",
+                  "pm.test('Location y ETag W/\"1\"', () => { pm.expect(pm.response.headers.get('Location')).to.include('/fhir/Observation/' + o.id + '/_history/1'); pm.expect(pm.response.headers.get('ETag')).to.eql('W/\"1\"'); });",
+                  "pm.test('LOINC 8302-2, valor 175 y subject propio', () => {",
+                  "  pm.expect(o.code.coding[0].code).to.eql('8302-2');",
+                  "  pm.expect(o.valueQuantity.value).to.eql(175);",
+                  "  pm.expect(o.subject.reference).to.eql('Patient/' + pm.collectionVariables.get('beto_patient'));",
+                  "});",
+                  "pm.test('perfil R4 bodyheight', () => pm.expect(o.meta.profile).to.include('http://hl7.org/fhir/StructureDefinition/bodyheight'));",
+                  "pm.collectionVariables.set('beto_height_id', o.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"8302-2\",\n        \"display\": \"Body height\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{beto_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{beto_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 175,\n    \"unit\": \"cm\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"cm\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 6 · POST IMC 27.8 kg/m2 (LOINC 39156-5, derivedFrom)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('Content-Type application/fhir+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/fhir+json'));",
+                  "const o = pm.response.json();",
+                  "pm.test('Location y ETag W/\"1\"', () => { pm.expect(pm.response.headers.get('Location')).to.include('/fhir/Observation/' + o.id + '/_history/1'); pm.expect(pm.response.headers.get('ETag')).to.eql('W/\"1\"'); });",
+                  "pm.test('LOINC 39156-5, valor 27.8 y subject propio', () => {",
+                  "  pm.expect(o.code.coding[0].code).to.eql('39156-5');",
+                  "  pm.expect(o.valueQuantity.value).to.eql(27.8);",
+                  "  pm.expect(o.subject.reference).to.eql('Patient/' + pm.collectionVariables.get('beto_patient'));",
+                  "});",
+                  "pm.test('perfil R4 bmi', () => pm.expect(o.meta.profile).to.include('http://hl7.org/fhir/StructureDefinition/bmi'));",
+                  "pm.collectionVariables.set('beto_bmi_id', o.id);",
+                  "pm.test('derivedFrom peso y talla', () => pm.expect(o.derivedFrom.length).to.eql(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"39156-5\",\n        \"display\": \"Body mass index (BMI) [Ratio]\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{beto_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{beto_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 27.8,\n    \"unit\": \"kg/m2\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"kg/m2\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ],\n  \"derivedFrom\": [\n    {\n      \"reference\": \"Observation/{{beto_weight_id}}\"\n    },\n    {\n      \"reference\": \"Observation/{{beto_height_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 7 · Buscar Observations propias (patient + code + date)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 Bundle searchset', () => { pm.response.to.have.status(200); const b = pm.response.json(); pm.expect(b.resourceType).to.eql('Bundle'); pm.expect(b.type).to.eql('searchset'); });",
+                  "const b = pm.response.json();",
+                  "const ids = (b.entry || []).map((e) => e.resource.id);",
+                  "pm.test('incluye peso, talla e IMC recién creados', () => ['beto_weight_id', 'beto_height_id', 'beto_bmi_id'].forEach((v) => pm.expect(ids).to.include(pm.collectionVariables.get(v))));",
+                  "pm.test('todas son del paciente propio', () => (b.entry || []).forEach((e) => pm.expect(e.resource.subject.reference).to.eql('Patient/demo-beto')));",
+                  "pm.test('solo códigos pedidos', () => (b.entry || []).forEach((e) => pm.expect(['29463-7', '8302-2', '39156-5']).to.include(e.resource.code.coding[0].code)));",
+                  "pm.test('total >= 3', () => pm.expect(b.total).to.be.at.least(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation?patient=Patient/{{beto_patient}}&code=http://loinc.org|29463-7,http://loinc.org|8302-2,http://loinc.org|39156-5&date=ge{{beto_today}}&_count=100",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 8 · POST QuestionnaireResponse PSS-4 (total 7)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const q = pm.response.json();",
+                  "pm.test('PSS-4 del paciente propio', () => { pm.expect(q.questionnaire).to.eql('https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema'); pm.expect(q.subject.reference).to.eql('Patient/demo-beto'); });",
+                  "pm.test('total PSS-4 = 7 (ítems 2 y 3 invertidos)', () => pm.expect(q.item.find((i) => i.linkId === 'pss4-total').answer[0].valueInteger).to.eql(7));",
+                  "pm.collectionVariables.set('beto_qr_id', q.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/QuestionnaireResponse",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"QuestionnaireResponse\",\n  \"questionnaire\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema\",\n  \"status\": \"completed\",\n  \"subject\": {\n    \"reference\": \"Patient/{{beto_patient}}\"\n  },\n  \"authored\": \"{{beto_now}}\",\n  \"item\": [\n    {\n      \"linkId\": \"pss4-1\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"2\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-2\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"2\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-3\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"3\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-4\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/likert\",\n            \"code\": \"2\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"pss4-total\",\n      \"answer\": [\n        {\n          \"valueInteger\": 7\n        }\n      ]\n    },\n    {\n      \"linkId\": \"actividad\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/actividad\",\n            \"code\": \"trabajando_estudiando\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"lugar\",\n      \"answer\": [\n        {\n          \"valueCoding\": {\n            \"system\": \"https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema/lugar\",\n            \"code\": \"casa\"\n          }\n        }\n      ]\n    },\n    {\n      \"linkId\": \"social\",\n      \"answer\": [\n        {\n          \"valueBoolean\": false\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 9 · Buscar QuestionnaireResponse PSS-4 propias",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 Bundle', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('incluye la respuesta creada', () => pm.expect((b.entry || []).map((e) => e.resource.id)).to.include(pm.collectionVariables.get('beto_qr_id')));",
+                  "pm.test('solo del paciente propio', () => (b.entry || []).forEach((e) => pm.expect(e.resource.subject.reference).to.eql('Patient/demo-beto')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/QuestionnaireResponse?questionnaire=https://github.com/CravApp/Gooluco/fhir/Questionnaire/pss4-ema&authored=ge{{beto_today}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto 10 · Refresh token (rotación)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('beto_old_refresh_token', pm.collectionVariables.get('beto_refresh_token'));",
+                  "pm.collectionVariables.set('beto_old_access_token', pm.collectionVariables.get('beto_access_token'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 nuevo token', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('mismo paciente y scope', () => { pm.expect(t.patient).to.eql('demo-beto'); pm.expect(t.scope.split(' ')).to.include('patient/Observation.crs'); });",
+                  "pm.test('refresh_token rotado (distinto del anterior)', () => { pm.expect(t.refresh_token).to.be.a('string'); pm.expect(t.refresh_token).to.not.eql(pm.collectionVariables.get('beto_old_refresh_token')); });",
+                  "pm.test('access_token nuevo', () => pm.expect(t.access_token).to.not.eql(pm.collectionVariables.get('beto_old_access_token')));",
+                  "pm.collectionVariables.set('beto_access_token', t.access_token);",
+                  "pm.collectionVariables.set('beto_refresh_token', t.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "refresh_token",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{beto_refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Beto 11 · Reusar el refresh token anterior → invalid_grant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('error invalid_grant', () => pm.expect(pm.response.json().error).to.eql('invalid_grant'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "refresh_token",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{beto_old_refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Beto 12 · El access token renovado funciona",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK con el token renovado', () => pm.response.to.have.status(200));",
+                  "pm.test('Patient/demo-beto', () => pm.expect(pm.response.json().id).to.eql('demo-beto'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/{{beto_patient}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Seguridad cruzada",
+      "description": "Requiere haber corrido antes las carpetas Ana y Beto (usa sus tokens e ids).",
+      "item": [
+        {
+          "name": "Sin token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));",
+                  "pm.test('WWW-Authenticate: Bearer', () => pm.expect(pm.response.headers.get('WWW-Authenticate')).to.match(/^Bearer/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Token manipulado → 401 invalid_token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));",
+                  "pm.test('error=invalid_token', () => pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('invalid_token'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{tampered_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana lee Patient/demo-beto → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));",
+                  "pm.test('issue forbidden', () => pm.expect(r.issue[0].code).to.eql('forbidden'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/demo-beto",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto lee el peso de Ana → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));",
+                  "pm.test('issue forbidden', () => pm.expect(r.issue[0].code).to.eql('forbidden'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation/{{ana_weight_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto lee la respuesta PSS-4 de Ana → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/QuestionnaireResponse/{{ana_qr_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Beto busca Observations de Ana → Bundle vacío",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('total 0 (filtrado por compartimento)', () => pm.expect(pm.response.json().total).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation?patient=Patient/demo-ana",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{beto_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ana crea un peso para Beto → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"29463-7\",\n        \"display\": \"Body weight\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{beto_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{beto_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 99.9,\n    \"unit\": \"kg\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"kg\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ana_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Scope limitado 1 · Autorizar como «ana» (formulario de consentimiento de prueba)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// PKCE S256 (RFC 7636): code_verifier aleatorio y code_challenge = BASE64URL(SHA256(verifier))",
+                  "const CJ = require('crypto-js');",
+                  "const b64url = (w) => CJ.enc.Base64.stringify(w).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+                  "const verifier = b64url(CJ.lib.WordArray.random(48));",
+                  "const challenge = b64url(CJ.SHA256(verifier));",
+                  "const state = b64url(CJ.lib.WordArray.random(12));",
+                  "pm.collectionVariables.set('lim_code_verifier', verifier);",
+                  "pm.collectionVariables.set('lim_code_challenge', challenge);",
+                  "pm.collectionVariables.set('lim_state', state);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('302 hacia redirect_uri (consentimiento aceptado)', () => {",
+                  "  pm.response.to.have.status(302);",
+                  "  pm.expect(pm.response.headers.get('Location')).to.match(new RegExp('^' + pm.environment.get('redirect_uri').replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')));",
+                  "});",
+                  "const loc = pm.response.headers.get('Location') || '';",
+                  "const qs = {};",
+                  "(loc.split('?')[1] || '').split('&').forEach((kv) => { const [k, v] = kv.split('='); if (k) qs[k] = decodeURIComponent(v || ''); });",
+                  "pm.test('la respuesta trae code', () => pm.expect(qs.code, JSON.stringify(qs)).to.be.a('string').and.not.empty);",
+                  "pm.test('state coincide (anti-CSRF)', () => pm.expect(qs.state).to.eql(pm.collectionVariables.get('lim_state')));",
+                  "pm.test('sin error OAuth', () => pm.expect(qs.error).to.be.undefined);",
+                  "pm.collectionVariables.set('lim_code', qs.code || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/authorize",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "response_type",
+                  "value": "code",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{redirect_uri}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "launch/patient patient/Observation.rs",
+                  "type": "text"
+                },
+                {
+                  "key": "state",
+                  "value": "{{lim_state}}",
+                  "type": "text"
+                },
+                {
+                  "key": "aud",
+                  "value": "{{fhir_base}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_challenge",
+                  "value": "{{lim_code_challenge}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_challenge_method",
+                  "value": "S256",
+                  "type": "text"
+                },
+                {
+                  "key": "decision",
+                  "value": "allow",
+                  "type": "text"
+                },
+                {
+                  "key": "user",
+                  "value": "ana",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Simula el clic «Autorizar» en la página de prueba. followRedirects está desactivado para leer el `code` del header Location."
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Scope limitado 2 · Canjear code + code_verifier en /auth/token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const CJ = require('crypto-js');",
+                  "const jwtPayload = (t) => { let p = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); while (p.length % 4) p += '='; return JSON.parse(CJ.enc.Base64.parse(p).toString(CJ.enc.Utf8)); };",
+                  "",
+                  "pm.test('200 token emitido', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('token_type Bearer y expires_in', () => { pm.expect(t.token_type.toLowerCase()).to.eql('bearer'); pm.expect(t.expires_in).to.be.above(0); });",
+                  "pm.test('Cache-Control: no-store', () => pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'));",
+                  "pm.test('contexto patient = demo-ana', () => pm.expect(t.patient).to.eql('demo-ana'));",
+                  "pm.test('scopes concedidos', () => { const s = t.scope.split(' '); [\"launch/patient\", \"patient/Observation.rs\"].forEach((x) => pm.expect(s).to.include(x)); });",
+                  "const at = jwtPayload(t.access_token);",
+                  "pm.test('access_token ES256 con aud = base FHIR', () => { pm.expect(at.aud).to.eql(pm.environment.get('fhir_base')); pm.expect(at.patient).to.eql('demo-ana'); });",
+                  "pm.collectionVariables.set('lim_access_token', t.access_token);",
+                  "pm.collectionVariables.set('lim_patient', t.patient || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "authorization_code",
+                  "type": "text"
+                },
+                {
+                  "key": "code",
+                  "value": "{{lim_code}}",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{redirect_uri}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_verifier",
+                  "value": "{{lim_code_verifier}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "gooluco-android",
+                  "type": "text"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Scope limitado: POST Observation sin .c → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));",
+                  "pm.test('insufficient_scope', () => pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('insufficient_scope'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Observation\",\n  \"status\": \"final\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"29463-7\",\n        \"display\": \"Body weight\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/{{ana_patient}}\"\n  },\n  \"effectiveDateTime\": \"{{ana_now}}\",\n  \"device\": {\n    \"display\": \"Balanza OKOK (simulada, Postman)\"\n  },\n  \"valueQuantity\": {\n    \"value\": 70.0,\n    \"unit\": \"kg\",\n    \"system\": \"http://unitsofmeasure.org\",\n    \"code\": \"kg\"\n  },\n  \"note\": [\n    {\n      \"text\": \"Dato FICTICIO de prueba (Postman)\"\n    }\n  ],\n  \"category\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/observation-category\",\n          \"code\": \"vital-signs\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{lim_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Scope limitado: QuestionnaireResponse sin scope → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/QuestionnaireResponse",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{lim_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Scope limitado: Patient sin scope → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "const r = pm.response.json();",
+                  "pm.test('OperationOutcome', () => pm.expect(r.resourceType).to.eql('OperationOutcome'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/demo-ana",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{lim_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Scope limitado: sí puede buscar sus Observations",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('solo de Ana', () => (pm.response.json().entry || []).forEach((e) => pm.expect(e.resource.subject.reference).to.eql('Patient/demo-ana')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Observation?code=29463-7",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{lim_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const t = pm.collectionVariables.get('ana_access_token') || 'x.y.z';",
+              "pm.collectionVariables.set('tampered_token', t.slice(0, -4) + (t.slice(-4) === 'AAAA' ? 'BBBB' : 'AAAA'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "OAuth 2.0 interactivo (Postman UI)",
+      "description": "Para probar a mano en Postman: pestaña Authorization → Get New Access Token. Abre la página de consentimiento de PRUEBA en el navegador; elige ana o beto. No se ejecuta con newman.",
+      "item": [
+        {
+          "name": "Patient en contexto (token de Postman OAuth 2.0)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con el token OAuth de Postman', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/fhir+json"
+              }
+            ],
+            "url": "{{fhir_base}}/Patient/{{oauth_patient}}",
+            "auth": {
+              "type": "oauth2",
+              "oauth2": [
+                {
+                  "key": "grant_type",
+                  "value": "authorization_code_with_pkce",
+                  "type": "string"
+                },
+                {
+                  "key": "authUrl",
+                  "value": "{{base_url}}/auth/authorize",
+                  "type": "string"
+                },
+                {
+                  "key": "accessTokenUrl",
+                  "value": "{{base_url}}/auth/token",
+                  "type": "string"
+                },
+                {
+                  "key": "refreshTokenUrl",
+                  "value": "{{base_url}}/auth/token",
+                  "type": "string"
+                },
+                {
+                  "key": "clientId",
+                  "value": "gooluco-android",
+                  "type": "string"
+                },
+                {
+                  "key": "clientSecret",
+                  "value": "",
+                  "type": "string"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{postman_callback}}",
+                  "type": "string"
+                },
+                {
+                  "key": "useBrowser",
+                  "value": false,
+                  "type": "boolean"
+                },
+                {
+                  "key": "scope",
+                  "value": "launch/patient openid fhirUser offline_access patient/Patient.rs patient/Observation.crs patient/QuestionnaireResponse.crs",
+                  "type": "string"
+                },
+                {
+                  "key": "state",
+                  "value": "postman-{{$randomUUID}}",
+                  "type": "string"
+                },
+                {
+                  "key": "challengeAlgorithm",
+                  "value": "S256",
+                  "type": "string"
+                },
+                {
+                  "key": "client_authentication",
+                  "value": "body",
+                  "type": "string"
+                },
+                {
+                  "key": "authRequestParams",
+                  "value": [
+                    {
+                      "key": "aud",
+                      "value": "{{fhir_base}}",
+                      "enabled": true,
+                      "send_as": "request_url"
+                    }
+                  ],
+                  "type": "any"
+                },
+                {
+                  "key": "tokenName",
+                  "value": "gooluco-smart",
+                  "type": "string"
+                },
+                {
+                  "key": "addTokenTo",
+                  "value": "header",
+                  "type": "string"
+                },
+                {
+                  "key": "headerPrefix",
+                  "value": "Bearer",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "ana_code_verifier",
+      "value": ""
+    },
+    {
+      "key": "ana_code_challenge",
+      "value": ""
+    },
+    {
+      "key": "ana_state",
+      "value": ""
+    },
+    {
+      "key": "ana_code",
+      "value": ""
+    },
+    {
+      "key": "ana_access_token",
+      "value": ""
+    },
+    {
+      "key": "ana_refresh_token",
+      "value": ""
+    },
+    {
+      "key": "ana_patient",
+      "value": ""
+    },
+    {
+      "key": "beto_code_verifier",
+      "value": ""
+    },
+    {
+      "key": "beto_code_challenge",
+      "value": ""
+    },
+    {
+      "key": "beto_state",
+      "value": ""
+    },
+    {
+      "key": "beto_code",
+      "value": ""
+    },
+    {
+      "key": "beto_access_token",
+      "value": ""
+    },
+    {
+      "key": "beto_refresh_token",
+      "value": ""
+    },
+    {
+      "key": "beto_patient",
+      "value": ""
+    },
+    {
+      "key": "lim_code_verifier",
+      "value": ""
+    },
+    {
+      "key": "lim_code_challenge",
+      "value": ""
+    },
+    {
+      "key": "lim_state",
+      "value": ""
+    },
+    {
+      "key": "lim_code",
+      "value": ""
+    },
+    {
+      "key": "lim_access_token",
+      "value": ""
+    },
+    {
+      "key": "lim_refresh_token",
+      "value": ""
+    },
+    {
+      "key": "lim_patient",
+      "value": ""
+    },
+    {
+      "key": "tampered_token",
+      "value": ""
+    },
+    {
+      "key": "oauth_patient",
+      "value": "demo-ana"
+    }
+  ],
+  "auth": {
+    "type": "noauth"
+  }
+}

@@ -19,7 +19,8 @@ export const CLIENTS: Client[] = [
     name: "Equilibra (app Android Gooluco)",
     type: "public",
     grantTypes: ["authorization_code", "refresh_token"],
-    redirectUris: ["pe.cravapp.gooluco:/oauth2redirect"],
+    // Postman (OAuth 2.0 interactivo) usa su callback fijo; solo para pruebas.
+    redirectUris: ["pe.cravapp.gooluco:/oauth2redirect", "https://oauth.pstmn.io/v1/callback"],
     allowLoopback: true,
     allowedScopes: [
       "openid",

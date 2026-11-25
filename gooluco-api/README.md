@@ -24,6 +24,7 @@ es el destino opcional de la sincronización.
 | `seed/` | Datos de demostración **ficticios** (solo local/pruebas) |
 | `test/` | Vitest dentro del runtime de Workers (`@cloudflare/vitest-plugin`, D1 local) |
 | `scripts/smoke.sh` | Prueba de humo con `curl` del flujo PKCE completo |
+| `postman/` | Colección Postman v2.1 + environment para validar los usuarios ficticios ana y beto (ver `postman/README.md`) |
 
 ## Endpoints
 
@@ -75,7 +76,7 @@ viajan en los ítems `pss4-total` / `total`.
 
 | client_id | Tipo SMART | Grants | Redirect | Scopes máximos |
 |---|---|---|---|---|
-| `gooluco-android` | `client-public` (app móvil, sin secreto) | `authorization_code` (+ PKCE S256 obligatorio), `refresh_token` | `pe.cravapp.gooluco:/oauth2redirect` y loopback `http://127.0.0.1:*` / `http://localhost:*` (RFC 8252) | `openid fhirUser launch/patient offline_access online_access patient/Patient.rs patient/Observation.crs patient/QuestionnaireResponse.crs` |
+| `gooluco-android` | `client-public` (app móvil, sin secreto) | `authorization_code` (+ PKCE S256 obligatorio), `refresh_token` | `pe.cravapp.gooluco:/oauth2redirect`, `https://oauth.pstmn.io/v1/callback` (Postman, solo pruebas) y loopback `http://127.0.0.1:*` / `http://localhost:*` (RFC 8252) | `openid fhirUser launch/patient offline_access online_access patient/Patient.rs patient/Observation.crs patient/QuestionnaireResponse.crs` |
 | `gooluco-backend` | `client-confidential-symmetric` | `client_credentials` | — | `system/Patient.crs system/Observation.crs system/QuestionnaireResponse.crs` |
 
 Usuarios de prueba en la página de autorización: `ana` → `Patient/demo-ana`, `beto` → `Patient/demo-beto`.

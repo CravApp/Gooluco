@@ -109,6 +109,14 @@ describe("authorization_code + PKCE (SMART standalone launch, cliente público)"
     expect(r.status).toBe(200);
   });
 
+  it("acepta el callback de Postman (OAuth 2.0 interactivo) y rechaza otros https", async () => {
+    const { challenge } = await pkce();
+    const ok = await SELF.fetch(`${ORIGIN}/auth/authorize?${authorizeParams(challenge, SCOPE, { redirect_uri: "https://oauth.pstmn.io/v1/callback" })}`);
+    expect(ok.status).toBe(200);
+    const bad = await SELF.fetch(`${ORIGIN}/auth/authorize?${authorizeParams(challenge, SCOPE, { redirect_uri: "https://oauth.pstmn.io/v1/otro" })}`, { redirect: "manual" });
+    expect(bad.status).toBe(400);
+  });
+
   it("si el usuario deniega → access_denied", async () => {
     const { challenge } = await pkce();
     const f = authorizeParams(challenge, SCOPE);
