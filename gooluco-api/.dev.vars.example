@@ -1,0 +1,5 @@
+# Copia generada por `npm run dev:vars` -> .dev.vars (no se sube a git).
+# JWT_PRIVATE_JWK: clave privada EC P-256 en formato JWK (firma ES256 de access/id tokens).
+JWT_PRIVATE_JWK='{"kty":"EC","crv":"P-256","x":"...","y":"...","d":"...","kid":"..."}'
+# Secreto compartido del cliente de backend de prueba (client_credentials).
+BACKEND_CLIENT_SECRET='cambia-esto'

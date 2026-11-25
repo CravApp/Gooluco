@@ -1,0 +1,7 @@
+extends:
+  - recommended
+rules:
+  # Los recursos FHIR son objetos abiertos y las rutas OAuth devuelven HTML/redirecciones.
+  operation-4xx-response: off
+  no-server-example.com: off
+  security-defined: off

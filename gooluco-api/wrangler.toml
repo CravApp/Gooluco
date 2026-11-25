@@ -1,0 +1,21 @@
+# Gooluco API — FHIR R4 + SMART App Launch 2.x (entorno de PRUEBA)
+name = "gooluco-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# Secretos (NUNCA en el repo):
+#   local:      npm run dev:vars   -> genera .dev.vars (ignorado por git)
+#   Cloudflare: wrangler secret put JWT_PRIVATE_JWK
+#               wrangler secret put BACKEND_CLIENT_SECRET
+
+[vars]
+ACCESS_TOKEN_TTL_SECONDS = "3600"
+# Si se despliega detrás de un dominio propio, fijar la URL pública (sin barra final):
+# PUBLIC_BASE_URL = "https://api.ejemplo.pe"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gooluco-fhir"
+# Reemplazar por el id real tras `wrangler d1 create gooluco-fhir` (el id no es secreto).
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

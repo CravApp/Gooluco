@@ -1,0 +1,37 @@
+{
+  "name": "gooluco-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API FHIR R4 + SMART App Launch 2.x (prueba) para Gooluco/Equilibra sobre Cloudflare Workers",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:vars": "node scripts/gen-dev-vars.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply gooluco-fhir --local",
+    "db:seed:local": "wrangler d1 execute gooluco-fhir --local --file=seed/0001_demo.sql",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "openapi:export": "tsx scripts/export-openapi.ts openapi.json",
+    "openapi:lint": "npm run openapi:export && redocly lint openapi.json",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "^1.6.3",
+    "@scalar/hono-api-reference": "^0.12.25",
+    "hono": "^4.13.22",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.9.2",
+    "@cloudflare/workers-types": "^5.20261125.1",
+    "@redocly/cli": "^2.83.0",
+    "@vitest/runner": "^4.1.12",
+    "@vitest/snapshot": "^4.1.12",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.168.0"
+  }
+}

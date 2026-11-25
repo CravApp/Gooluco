@@ -1,0 +1,96 @@
+name: Gooluco API · FHIR + SMART (Cloudflare Workers)
+
+on:
+  push:
+    branches: ["feat/**", "main"]
+    paths:
+      - "gooluco-api/**"
+      - ".github/workflows/gooluco-api.yml"
+  pull_request:
+    paths:
+      - "gooluco-api/**"
+      - ".github/workflows/gooluco-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gooluco-api-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: gooluco-api
+
+jobs:
+  check:
+    name: Typecheck + tests + OpenAPI lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: gooluco-api/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests (vitest + @cloudflare/vitest-plugin, D1 local)
+        run: npm test
+      - name: OpenAPI 3.1 (export + redocly lint)
+        run: npm run openapi:lint
+      - name: Build de prueba (wrangler deploy --dry-run)
+        run: npx wrangler deploy --dry-run --outdir dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gooluco-api-openapi
+          path: gooluco-api/openapi.json
+
+  # Despliegue OPCIONAL: solo corre si existen los secretos CLOUDFLARE_API_TOKEN y CLOUDFLARE_ACCOUNT_ID
+  # y la variable de repositorio D1_DATABASE_ID, y solo en main o manualmente (workflow_dispatch).
+  gate:
+    name: ¿Hay credenciales de Cloudflare?
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.g.outputs.enabled }}
+    steps:
+      - id: g
+        working-directory: .
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_ID: ${{ vars.D1_DATABASE_ID }}
+        run: |
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ] && [ -n "$D1_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Deploy omitido: faltan CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID (secrets) o D1_DATABASE_ID (variable)."
+          fi
+
+  deploy:
+    name: Deploy a Cloudflare Workers (opcional)
+    needs: [check, gate]
+    if: needs.gate.outputs.enabled == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: gooluco-api/package-lock.json
+      - run: npm ci
+      - name: Fijar database_id de D1
+        run: sed -i "s/^database_id = .*/database_id = \"${{ vars.D1_DATABASE_ID }}\"/" wrangler.toml
+      - name: Migraciones D1 (remoto)
+        run: npx wrangler d1 migrations apply gooluco-fhir --remote
+      - name: Deploy
+        run: npx wrangler deploy
