@@ -16,6 +16,6 @@ ACCESS_TOKEN_TTL_SECONDS = "3600"
 [[d1_databases]]
 binding = "DB"
 database_name = "gooluco-fhir"
-# Reemplazar por el id real tras `wrangler d1 create gooluco-fhir` (el id no es secreto).
-database_id = "00000000-0000-0000-0000-000000000000"
+# D1 de la cuenta de prueba (el id no es secreto). Para otra cuenta: `wrangler d1 create gooluco-fhir`.
+database_id = "f36a167d-c32c-4bdf-b6e2-72cca9375404"
 migrations_dir = "migrations"

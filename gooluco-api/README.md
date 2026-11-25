@@ -251,14 +251,28 @@ La app `gooluco-app` (rama `feat/app-base`) hoy es 100 % local y **no declara el
    (`npx wrangler dev --ip 0.0.0.0`) y permitir tráfico HTTP solo en el build debug (`networkSecurityConfig`);
    en producción, solo HTTPS.
 
-## Despliegue en Cloudflare (no realizado)
+## Despliegue en Cloudflare
 
-Nada de esto se ha desplegado. Para hacerlo hace falta una cuenta de Cloudflare:
+### Despliegue de prueba actual
+
+| | |
+|---|---|
+| Base | https://gooluco-api.mercadeoperuviano.workers.dev |
+| Docs (Scalar) | https://gooluco-api.mercadeoperuviano.workers.dev/docs |
+| CapabilityStatement | https://gooluco-api.mercadeoperuviano.workers.dev/fhir/metadata |
+| SMART discovery | https://gooluco-api.mercadeoperuviano.workers.dev/fhir/.well-known/smart-configuration |
+| Base FHIR (`aud`) | `https://gooluco-api.mercadeoperuviano.workers.dev/fhir` |
+| D1 | `gooluco-fhir` (esquema `0001_init.sql` + semilla **ficticia** `ana`/`beto`) |
+
+Es un despliegue **de prueba** con usuarios ficticios: no cargues datos reales. Los secretos
+(`JWT_PRIVATE_JWK`, `BACKEND_CLIENT_SECRET`) están como *secrets* del Worker y no están en el repo.
+
+### Desplegar en otra cuenta
 
 1. `npx wrangler login` (o un API token con permisos *Workers Scripts:Edit* y *D1:Edit*).
 2. `npx wrangler d1 create gooluco-fhir` → copiar el `database_id` en `wrangler.toml` (o en la variable de
-   repositorio `D1_DATABASE_ID` para CI).
-3. `npx wrangler d1 migrations apply gooluco-fhir --remote` (**no** cargar `seed/` en producción).
+   repositorio `D1_DATABASE_ID` para CI, que lo sobrescribe).
+3. `npx wrangler d1 migrations apply gooluco-fhir --remote` (cargar `seed/` solo en entornos de prueba).
 4. Secretos: `npm run dev:vars` genera valores; súbelos con
    `npx wrangler secret put JWT_PRIVATE_JWK` y `npx wrangler secret put BACKEND_CLIENT_SECRET`.
 5. `npx wrangler deploy`.
