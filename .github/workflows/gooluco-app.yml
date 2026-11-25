@@ -1,0 +1,76 @@
+name: Gooluco App · APK debug
+
+on:
+  push:
+    branches: ["feat/**"]
+    paths:
+      - "gooluco-app/**"
+      - "spike-okok/okok-decoder/**"
+      - ".github/workflows/gooluco-app.yml"
+  pull_request:
+    paths:
+      - "gooluco-app/**"
+      - "spike-okok/okok-decoder/**"
+      - ".github/workflows/gooluco-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gooluco-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Tests + assembleDebug
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: gooluco-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+          log-accepted-android-sdk-licenses: false
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Tests unitarios (decodificador OKOK + dominio de la app)
+        run: ./gradlew :okok-decoder:test :app:testDebugUnitTest --console=plain
+
+      - name: assembleDebug
+        run: ./gradlew :app:assembleDebug --console=plain
+
+      - name: Reportes de tests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gooluco-app-test-reports
+          path: |
+            spike-okok/okok-decoder/build/reports/tests/
+            spike-okok/okok-decoder/build/test-results/
+            gooluco-app/app/build/reports/tests/
+            gooluco-app/app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Subir APK debug
+        uses: actions/upload-artifact@v7
+        with:
+          name: gooluco-app-debug-apk
+          path: gooluco-app/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30

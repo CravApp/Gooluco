@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Balanza estilizada con un anillo de progreso (identidad «Equilibra»). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#86F2E4" android:strokeWidth="5"
+        android:strokeLineCap="round" android:pathData="M54,32 A22,22 0 1,1 32.1,56" />
+    <path android:fillColor="#FFFFFF" android:pathData="M40,46 h28 a4,4 0 0 1 4,4 v16 a4,4 0 0 1 -4,4 h-28 a4,4 0 0 1 -4,-4 v-16 a4,4 0 0 1 4,-4 z" />
+    <path android:fillColor="#0049BE" android:pathData="M46,52 h16 v6 h-16 z" />
+    <path android:fillColor="#B1F661" android:pathData="M50,62 h8 v3 h-8 z" />
+</vector>
